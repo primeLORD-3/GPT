@@ -15,6 +15,15 @@
           <span class="nav-icon">📊</span>
           <span class="nav-text">仪表盘</span>
         </router-link>
+
+        <router-link
+          to="/novel"
+          class="nav-link"
+          :class="{ active: $route.path === '/novel' }"
+        >
+          <span class="nav-icon">📖</span>
+          <span class="nav-text">互动小说</span>
+        </router-link>
         
         <router-link 
           to="/backends" 
@@ -37,11 +46,9 @@
 </template>
 
 <script setup>
-import { useRoute } from 'vue-router'
 import { useBackendStore } from '@/stores/backend'
 import BackendSwitcher from './backend/BackendSwitcher.vue'
 
-const route = useRoute()
 const backendStore = useBackendStore()
 </script>
 
