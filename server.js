@@ -84,6 +84,33 @@ function serveStatic(req, res) {
 }
 
 /**
+ * 解析上游请求地址。
+ * 兼容两种输入方式：
+ * 1) apiBase + 相对 apiPath（推荐）
+ * 2) apiPath 直接填写完整 URL（当完整 URL 存在时优先使用它）
+ * @param {string} apiBase
+ * @param {string} apiPath
+ */
+function resolveEndpoint(apiBase, apiPath) {
+  const trimmedBase = (apiBase || '').trim();
+  const trimmedPath = (apiPath || '').trim();
+
+  if (/^https?:\/\//i.test(trimmedPath)) {
+    return trimmedPath;
+  }
+
+  if (!trimmedBase) {
+    throw new Error('缺少 apiBase，或将完整 URL 填写到 apiPath');
+  }
+
+  const normalizedPath = (trimmedPath || '/v1/chat/completions').startsWith('/')
+    ? (trimmedPath || '/v1/chat/completions')
+    : `/${trimmedPath || '/v1/chat/completions'}`;
+
+  return `${trimmedBase.replace(/\/$/, '')}${normalizedPath}`;
+}
+
+/**
  * 将请求转发到用户配置的反代 API。
  * 支持自定义 base URL + path，适配任意 OpenAI 兼容网关。
  * @param {any} body
@@ -98,8 +125,8 @@ async function proxyChatRequest(body) {
     temperature = 0.7
   } = body;
 
-  if (!apiBase || !model || !Array.isArray(messages)) {
-    throw new Error('缺少必要参数 apiBase/model/messages');
+  if (!model || !Array.isArray(messages)) {
+    throw new Error('缺少必要参数 model/messages');
   }
 
   const contextBytes = Buffer.byteLength(JSON.stringify(messages), 'utf8');
@@ -109,8 +136,7 @@ async function proxyChatRequest(body) {
     throw error;
   }
 
-  const normalizedPath = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
-  const endpoint = `${apiBase.replace(/\/$/, '')}${normalizedPath}`;
+  const endpoint = resolveEndpoint(apiBase, apiPath);
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -132,7 +158,7 @@ async function proxyChatRequest(body) {
   try {
     payload = text ? JSON.parse(text) : {};
   } catch (error) {
-    throw new Error(`上游返回了非 JSON 数据: ${text.slice(0, 300)}`);
+    throw new Error(`上游返回了非 JSON 数据，通常是接口地址填错或网关未返回 OpenAI JSON。片段: ${text.slice(0, 300)}`);
   }
 
   if (!response.ok) {
