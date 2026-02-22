@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'proxy-chat-studio-state-v2';
+const STORAGE_KEY = 'proxy-chat-studio-state-v3';
 const MAX_CONTEXT_BYTES = 50 * 1024 * 1024;
 
 const elements = {
@@ -9,8 +9,10 @@ const elements = {
   model: document.getElementById('model'),
   modelOptions: document.getElementById('modelOptions'),
   refreshModelsBtn: document.getElementById('refreshModelsBtn'),
+  streamMode: document.getElementById('streamMode'),
   systemPrompt: document.getElementById('systemPrompt'),
   assistantPrompt: document.getElementById('assistantPrompt'),
+  hiddenTagRegex: document.getElementById('hiddenTagRegex'),
   messages: document.getElementById('messages'),
   userInput: document.getElementById('userInput'),
   sendBtn: document.getElementById('sendBtn'),
@@ -27,52 +29,68 @@ const state = {
   modelsPath: '/v1/models',
   apiKey: '',
   model: 'gpt-4o-mini',
+  useStream: true,
   systemPrompt: '你是一个专业且友好的中文 AI 助手。',
   assistantPrompt: '好的，我会先理解你的目标，再给你可执行的步骤。',
+  hiddenTagRegex: 'think|analysis|internal',
   messages: [],
   modelList: []
 };
 
-/**
- * 将状态同步到 localStorage，确保刷新页面也不会丢上下文。
- */
 function persistState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   renderContextInfo();
 }
 
-/**
- * 初始化状态，优先从本地持久化读取。
- */
 function loadState() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return;
-    const parsed = JSON.parse(saved);
-    Object.assign(state, parsed);
+    Object.assign(state, JSON.parse(saved));
   } catch (error) {
     console.warn('读取本地存档失败，使用默认配置', error);
   }
 }
 
-/**
- * 将当前 state 渲染到 UI 控件。
- */
 function syncFieldsFromState() {
   elements.apiBase.value = state.apiBase;
   elements.apiPath.value = state.apiPath;
   elements.modelsPath.value = state.modelsPath;
   elements.apiKey.value = state.apiKey;
   elements.model.value = state.model;
+  elements.streamMode.checked = Boolean(state.useStream);
   elements.systemPrompt.value = state.systemPrompt;
   elements.assistantPrompt.value = state.assistantPrompt;
+  elements.hiddenTagRegex.value = state.hiddenTagRegex;
   renderModelOptions();
 }
 
 /**
- * 根据消息角色创建消息节点。
- * @param {{role: string, content: string}} message
+ * 正则标签渲染系统：
+ * - 标签格式：<tag>内容</tag>
+ * - 若 tag 命中 hiddenTagRegex，则内容不展示
+ * - 未命中的标签保留其内部文本并去掉标签本身
+ * @param {string} rawText
  */
+function applyTagRenderRules(rawText) {
+  const text = String(rawText || '');
+  if (!text.includes('<')) return text;
+
+  let hiddenRegex;
+  try {
+    hiddenRegex = new RegExp(`^(?:${state.hiddenTagRegex || ''})$`, 'i');
+  } catch {
+    hiddenRegex = /^$/;
+  }
+
+  return text.replace(/<([a-zA-Z0-9_-]+)>([\s\S]*?)<\/\1>/g, (_, tagName, content) => {
+    if (hiddenRegex.test(tagName)) {
+      return '';
+    }
+    return content;
+  });
+}
+
 function createMessageNode(message) {
   const wrapper = document.createElement('article');
   wrapper.className = `msg ${message.role}`;
@@ -82,15 +100,12 @@ function createMessageNode(message) {
   role.textContent = message.role;
 
   const content = document.createElement('div');
-  content.textContent = message.content;
+  content.textContent = message.role === 'assistant' ? applyTagRenderRules(message.content) : message.content;
 
   wrapper.append(role, content);
   return wrapper;
 }
 
-/**
- * 重新渲染整个消息区。
- */
 function renderMessages() {
   elements.messages.innerHTML = '';
 
@@ -109,9 +124,6 @@ function renderMessages() {
   elements.messages.scrollTop = elements.messages.scrollHeight;
 }
 
-/**
- * 计算并展示上下文字节占用。
- */
 function renderContextInfo() {
   const assembled = buildApiMessages();
   const bytes = new TextEncoder().encode(JSON.stringify(assembled)).length;
@@ -124,12 +136,6 @@ function setStatus(text) {
   elements.status.textContent = text;
 }
 
-/**
- * 组装发给上游 OpenAI 兼容接口的消息数组。
- * 这里支持“两套提示词”：
- * - systemPrompt -> role=system
- * - assistantPrompt -> role=assistant（预置助手行为）
- */
 function buildApiMessages() {
   const messages = [];
   if (state.systemPrompt.trim()) {
@@ -159,7 +165,8 @@ function bindInputPersistence() {
     ['apiKey', elements.apiKey],
     ['model', elements.model],
     ['systemPrompt', elements.systemPrompt],
-    ['assistantPrompt', elements.assistantPrompt]
+    ['assistantPrompt', elements.assistantPrompt],
+    ['hiddenTagRegex', elements.hiddenTagRegex]
   ];
 
   for (const [key, element] of fieldMapping) {
@@ -169,13 +176,13 @@ function bindInputPersistence() {
       renderMessages();
     });
   }
+
+  elements.streamMode.addEventListener('change', () => {
+    state.useStream = elements.streamMode.checked;
+    persistState();
+  });
 }
 
-/**
- * 添加一条消息并即时存档。
- * @param {'user'|'assistant'} role
- * @param {string} content
- */
 function appendMessage(role, content) {
   state.messages.push({ role, content });
   persistState();
@@ -219,6 +226,76 @@ async function refreshModels() {
   }
 }
 
+async function sendMessageNonStream(payload) {
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || '请求失败');
+  appendMessage('assistant', data.assistantMessage.content || '');
+  setStatus(`完成(非流式)，上下文 ${(data.contextBytes / (1024 * 1024)).toFixed(2)}MB`);
+}
+
+/**
+ * 使用后端 SSE 进行流式渲染。
+ * 后端事件：
+ * - token: 单个增量 token
+ * - done: 全量完成
+ */
+async function sendMessageStream(payload) {
+  const response = await fetch('/api/chat/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok || !response.body) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || '流式请求失败');
+  }
+
+  appendMessage('assistant', '');
+  const assistantIndex = state.messages.length - 1;
+
+  const decoder = new TextDecoder();
+  const reader = response.body.getReader();
+  let buffer = '';
+  let full = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split('\n\n');
+    buffer = frames.pop() || '';
+
+    for (const frame of frames) {
+      const eventLine = frame.split('\n').find((line) => line.startsWith('event:'));
+      const dataLine = frame.split('\n').find((line) => line.startsWith('data:'));
+      if (!eventLine || !dataLine) continue;
+
+      const eventName = eventLine.replace('event:', '').trim();
+      const payloadJson = JSON.parse(dataLine.replace('data:', '').trim());
+
+      if (eventName === 'token') {
+        full += payloadJson.token || '';
+        state.messages[assistantIndex].content = full;
+        renderMessages();
+      }
+
+      if (eventName === 'done') {
+        state.messages[assistantIndex].content = payloadJson.content || full;
+        persistState();
+        renderMessages();
+        setStatus(`完成(流式)，上下文 ${(payloadJson.contextBytes / (1024 * 1024)).toFixed(2)}MB`);
+      }
+    }
+  }
+}
+
 async function sendMessage() {
   const content = elements.userInput.value.trim();
   if (!content) return;
@@ -241,22 +318,14 @@ async function sendMessage() {
   }
 
   elements.sendBtn.disabled = true;
-  setStatus('请求中...');
+  setStatus(state.useStream ? '流式请求中...' : '请求中...');
 
   try {
-    const response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || '请求失败');
+    if (state.useStream) {
+      await sendMessageStream(payload);
+    } else {
+      await sendMessageNonStream(payload);
     }
-
-    appendMessage('assistant', data.assistantMessage.content || '');
-    setStatus(`完成，上下文 ${(data.contextBytes / (1024 * 1024)).toFixed(2)}MB`);
   } catch (error) {
     setStatus(`错误: ${error.message}`);
   } finally {
@@ -273,14 +342,7 @@ function insertAssistantMessageManually() {
 
 function exportContext() {
   const blob = new Blob([
-    JSON.stringify(
-      {
-        exportedAt: new Date().toISOString(),
-        ...state
-      },
-      null,
-      2
-    )
+    JSON.stringify({ exportedAt: new Date().toISOString(), ...state }, null, 2)
   ], { type: 'application/json' });
 
   const url = URL.createObjectURL(blob);

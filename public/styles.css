@@ -60,6 +60,18 @@ label {
   color: var(--muted);
 }
 
+.inline-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+
+
 input,
 textarea,
 button {

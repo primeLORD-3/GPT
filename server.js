@@ -8,6 +8,17 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_CONTEXT_BYTES = 50 * 1024 * 1024; // 50MB 上下文限制
 
 /**
+ * 打印统一格式的后端日志，方便在控制台排查问题。
+ * @param {'INFO'|'WARN'|'ERROR'} level
+ * @param {string} message
+ * @param {Record<string, any>} [extra]
+ */
+function log(level, message, extra = {}) {
+  const time = new Date().toISOString();
+  console.log(`[${time}] [${level}] ${message}${Object.keys(extra).length ? ` ${JSON.stringify(extra)}` : ''}`);
+}
+
+/**
  * 从请求体中读取 JSON 数据。
  * @param {import('http').IncomingMessage} req
  * @returns {Promise<any>}
@@ -48,6 +59,17 @@ function sendJson(res, statusCode, payload) {
 }
 
 /**
+ * 向浏览器发送 SSE 数据帧。
+ * @param {import('http').ServerResponse} res
+ * @param {string} event
+ * @param {any} data
+ */
+function sendSse(res, event, data) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+/**
  * 静态文件服务。
  * @param {import('http').IncomingMessage} req
  * @param {import('http').ServerResponse} res
@@ -85,9 +107,6 @@ function serveStatic(req, res) {
 
 /**
  * 解析上游请求地址。
- * 兼容两种输入方式：
- * 1) apiBase + 相对 apiPath（推荐）
- * 2) apiPath 直接填写完整 URL（当完整 URL 存在时优先使用它）
  * @param {string} apiBase
  * @param {string} apiPath
  */
@@ -103,25 +122,15 @@ function resolveEndpoint(apiBase, apiPath) {
     throw new Error('缺少 apiBase，或将完整 URL 填写到 apiPath');
   }
 
-  const normalizedPath = (trimmedPath || '/v1/chat/completions').startsWith('/')
-    ? (trimmedPath || '/v1/chat/completions')
-    : `/${trimmedPath || '/v1/chat/completions'}`;
+  const defaultPath = '/v1/chat/completions';
+  const rawPath = trimmedPath || defaultPath;
+  const normalizedPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
 
   return `${trimmedBase.replace(/\/$/, '')}${normalizedPath}`;
 }
 
 /**
- * 解析模型列表接口地址。可单独配置，便于适配不同反代实现。
- * @param {string} apiBase
- * @param {string} modelsPath
- */
-function resolveModelsEndpoint(apiBase, modelsPath) {
-  return resolveEndpoint(apiBase, modelsPath || '/v1/models');
-}
-
-/**
- * 将请求转发到用户配置的反代 Chat API。
- * 支持自定义 base URL + path，适配任意 OpenAI 兼容网关。
+ * 将请求转发到用户配置的反代 Chat API（非流式）。
  * @param {any} body
  */
 async function proxyChatRequest(body) {
@@ -146,6 +155,7 @@ async function proxyChatRequest(body) {
   }
 
   const endpoint = resolveEndpoint(apiBase, apiPath);
+  log('INFO', '发送非流式请求', { endpoint, model, contextBytes });
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -181,6 +191,11 @@ async function proxyChatRequest(body) {
     throw new Error('上游返回中没有 choices[0].message');
   }
 
+  log('INFO', '非流式请求完成', {
+    upstreamStatus: response.status,
+    preview: String(assistantMessage.content || '').slice(0, 120)
+  });
+
   return {
     assistantMessage,
     raw: payload,
@@ -189,12 +204,101 @@ async function proxyChatRequest(body) {
 }
 
 /**
+ * 将上游 SSE 流转发给前端。
+ * 前端可用 fetch + ReadableStream 实现实时打字效果。
+ * @param {any} body
+ * @param {import('http').ServerResponse} res
+ */
+async function proxyChatStream(body, res) {
+  const {
+    apiBase,
+    apiPath = '/v1/chat/completions',
+    apiKey,
+    model,
+    messages,
+    temperature = 0.7
+  } = body;
+
+  if (!model || !Array.isArray(messages)) {
+    throw new Error('缺少必要参数 model/messages');
+  }
+
+  const contextBytes = Buffer.byteLength(JSON.stringify(messages), 'utf8');
+  if (contextBytes > MAX_CONTEXT_BYTES) {
+    const error = new Error(`上下文超过 50MB 限制，当前大小 ${(contextBytes / (1024 * 1024)).toFixed(2)}MB`);
+    error.statusCode = 413;
+    throw error;
+  }
+
+  const endpoint = resolveEndpoint(apiBase, apiPath);
+  log('INFO', '发送流式请求', { endpoint, model, contextBytes });
+
+  const upstream = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+    },
+    body: JSON.stringify({ model, messages, temperature, stream: true })
+  });
+
+  if (!upstream.ok || !upstream.body) {
+    const text = await upstream.text();
+    throw new Error(`流式上游错误 ${upstream.status}: ${text.slice(0, 300)}`);
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive'
+  });
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalContent = '';
+
+  for await (const chunk of upstream.body) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+
+      const data = trimmed.replace(/^data:\s*/, '');
+      if (data === '[DONE]') {
+        sendSse(res, 'done', { content: finalContent, contextBytes });
+        log('INFO', '流式请求完成', { preview: finalContent.slice(0, 120) });
+        res.end();
+        return;
+      }
+
+      try {
+        const payload = JSON.parse(data);
+        const delta = payload?.choices?.[0]?.delta?.content || '';
+        if (delta) {
+          finalContent += delta;
+          sendSse(res, 'token', { token: delta });
+        }
+      } catch {
+        // 某些网关可能插入非 JSON 行，直接忽略，保证流不中断。
+      }
+    }
+  }
+
+  sendSse(res, 'done', { content: finalContent, contextBytes });
+  res.end();
+}
+
+/**
  * 拉取上游模型列表（/v1/models），用于前端模型选择。
  * @param {any} body
  */
 async function proxyModelsRequest(body) {
   const { apiBase, modelsPath = '/v1/models', apiKey } = body;
-  const endpoint = resolveModelsEndpoint(apiBase, modelsPath);
+  const endpoint = resolveEndpoint(apiBase, modelsPath);
+  log('INFO', '拉取模型列表', { endpoint });
 
   const response = await fetch(endpoint, {
     method: 'GET',
@@ -222,6 +326,8 @@ async function proxyModelsRequest(body) {
     ? payload.data.map((item) => item?.id).filter(Boolean)
     : [];
 
+  log('INFO', '模型列表获取完成', { count: models.length });
+
   return {
     models,
     raw: payload
@@ -235,9 +341,19 @@ const server = http.createServer(async (req, res) => {
       const result = await proxyChatRequest(body);
       sendJson(res, 200, result);
     } catch (error) {
-      sendJson(res, error.statusCode || 400, {
-        error: error.message || '未知错误'
-      });
+      log('ERROR', '非流式请求失败', { message: error.message });
+      sendJson(res, error.statusCode || 400, { error: error.message || '未知错误' });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/chat/stream') {
+    try {
+      const body = await readJsonBody(req);
+      await proxyChatStream(body, res);
+    } catch (error) {
+      log('ERROR', '流式请求失败', { message: error.message });
+      sendJson(res, error.statusCode || 400, { error: error.message || '未知错误' });
     }
     return;
   }
@@ -248,9 +364,8 @@ const server = http.createServer(async (req, res) => {
       const result = await proxyModelsRequest(body);
       sendJson(res, 200, result);
     } catch (error) {
-      sendJson(res, error.statusCode || 400, {
-        error: error.message || '未知错误'
-      });
+      log('ERROR', '模型列表请求失败', { message: error.message });
+      sendJson(res, error.statusCode || 400, { error: error.message || '未知错误' });
     }
     return;
   }
@@ -265,5 +380,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+  log('INFO', `Server is running on http://localhost:${PORT}`);
 });

@@ -35,12 +35,20 @@
 
         <button id="refreshModelsBtn" class="secondary">获取反代模型列表</button>
 
+        <label class="inline-check">
+          <input id="streamMode" type="checkbox" /> 使用流式传输
+        </label>
+
         <label>System Prompt（系统提示词）
           <textarea id="systemPrompt" rows="5" placeholder="在这里定义系统提示词..."></textarea>
         </label>
 
         <label>Assistant Prompt（assistant 预设提示词）
           <textarea id="assistantPrompt" rows="5" placeholder="在这里定义 assistant 预设消息..."></textarea>
+        </label>
+
+        <label>隐藏标签正则（按标签名匹配）
+          <input id="hiddenTagRegex" type="text" placeholder="think|analysis|internal" />
         </label>
 
         <div class="context-info" id="contextInfo">上下文大小: 0 MB / 50 MB</div>
