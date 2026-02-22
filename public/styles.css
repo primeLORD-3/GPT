@@ -71,6 +71,11 @@ label {
   height: 16px;
 }
 
+.mini-input {
+  width: 78px;
+  padding: 4px 8px;
+}
+
 
 input,
 textarea,

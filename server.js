@@ -140,7 +140,9 @@ async function proxyChatRequest(body) {
     apiKey,
     model,
     messages,
-    temperature = 0.7
+    temperature = 0.7,
+    n = 1,
+    choiceIndex = 1
   } = body;
 
   if (!model || !Array.isArray(messages)) {
@@ -155,7 +157,10 @@ async function proxyChatRequest(body) {
   }
 
   const endpoint = resolveEndpoint(apiBase, apiPath);
-  log('INFO', '发送非流式请求', { endpoint, model, contextBytes });
+  const safeN = Math.max(1, Number(n) || 1);
+  const safeChoiceIndex = Math.max(1, Number(choiceIndex) || 1);
+
+  log('INFO', '发送非流式请求', { endpoint, model, contextBytes, n: safeN, choiceIndex: safeChoiceIndex });
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -167,6 +172,7 @@ async function proxyChatRequest(body) {
       model,
       messages,
       temperature,
+      n: safeN,
       stream: false
     })
   });
@@ -186,9 +192,11 @@ async function proxyChatRequest(body) {
     throw err;
   }
 
-  const assistantMessage = payload?.choices?.[0]?.message;
+  const choices = Array.isArray(payload?.choices) ? payload.choices : [];
+  const selected = choices[safeChoiceIndex - 1] || choices[0];
+  const assistantMessage = selected?.message;
   if (!assistantMessage) {
-    throw new Error('上游返回中没有 choices[0].message');
+    throw new Error('上游返回中没有可用的 choices.message');
   }
 
   log('INFO', '非流式请求完成', {
@@ -199,7 +207,9 @@ async function proxyChatRequest(body) {
   return {
     assistantMessage,
     raw: payload,
-    contextBytes
+    contextBytes,
+    choicesCount: choices.length,
+    selectedChoiceIndex: choices[safeChoiceIndex - 1] ? safeChoiceIndex : 1
   };
 }
 
@@ -216,7 +226,9 @@ async function proxyChatStream(body, res) {
     apiKey,
     model,
     messages,
-    temperature = 0.7
+    temperature = 0.7,
+    n = 1,
+    choiceIndex = 1
   } = body;
 
   if (!model || !Array.isArray(messages)) {
