@@ -1,12 +1,16 @@
-const STORAGE_KEY = 'proxy-chat-studio-state-v1';
+const STORAGE_KEY = 'proxy-chat-studio-state-v2';
 const MAX_CONTEXT_BYTES = 50 * 1024 * 1024;
 
 const elements = {
   apiBase: document.getElementById('apiBase'),
   apiPath: document.getElementById('apiPath'),
+  modelsPath: document.getElementById('modelsPath'),
   apiKey: document.getElementById('apiKey'),
   model: document.getElementById('model'),
+  modelOptions: document.getElementById('modelOptions'),
+  refreshModelsBtn: document.getElementById('refreshModelsBtn'),
   systemPrompt: document.getElementById('systemPrompt'),
+  assistantPrompt: document.getElementById('assistantPrompt'),
   messages: document.getElementById('messages'),
   userInput: document.getElementById('userInput'),
   sendBtn: document.getElementById('sendBtn'),
@@ -20,10 +24,13 @@ const elements = {
 const state = {
   apiBase: '',
   apiPath: '/v1/chat/completions',
+  modelsPath: '/v1/models',
   apiKey: '',
   model: 'gpt-4o-mini',
   systemPrompt: '你是一个专业且友好的中文 AI 助手。',
-  messages: []
+  assistantPrompt: '好的，我会先理解你的目标，再给你可执行的步骤。',
+  messages: [],
+  modelList: []
 };
 
 /**
@@ -54,9 +61,12 @@ function loadState() {
 function syncFieldsFromState() {
   elements.apiBase.value = state.apiBase;
   elements.apiPath.value = state.apiPath;
+  elements.modelsPath.value = state.modelsPath;
   elements.apiKey.value = state.apiKey;
   elements.model.value = state.model;
   elements.systemPrompt.value = state.systemPrompt;
+  elements.assistantPrompt.value = state.assistantPrompt;
+  renderModelOptions();
 }
 
 /**
@@ -85,9 +95,11 @@ function renderMessages() {
   elements.messages.innerHTML = '';
 
   if (state.systemPrompt.trim()) {
-    elements.messages.append(
-      createMessageNode({ role: 'system', content: state.systemPrompt.trim() })
-    );
+    elements.messages.append(createMessageNode({ role: 'system', content: state.systemPrompt.trim() }));
+  }
+
+  if (state.assistantPrompt.trim()) {
+    elements.messages.append(createMessageNode({ role: 'assistant_prompt', content: state.assistantPrompt.trim() }));
   }
 
   for (const msg of state.messages) {
@@ -112,22 +124,42 @@ function setStatus(text) {
   elements.status.textContent = text;
 }
 
+/**
+ * 组装发给上游 OpenAI 兼容接口的消息数组。
+ * 这里支持“两套提示词”：
+ * - systemPrompt -> role=system
+ * - assistantPrompt -> role=assistant（预置助手行为）
+ */
 function buildApiMessages() {
   const messages = [];
   if (state.systemPrompt.trim()) {
     messages.push({ role: 'system', content: state.systemPrompt.trim() });
   }
+  if (state.assistantPrompt.trim()) {
+    messages.push({ role: 'assistant', content: state.assistantPrompt.trim() });
+  }
   messages.push(...state.messages);
   return messages;
+}
+
+function renderModelOptions() {
+  elements.modelOptions.innerHTML = '';
+  for (const item of state.modelList || []) {
+    const option = document.createElement('option');
+    option.value = item;
+    elements.modelOptions.append(option);
+  }
 }
 
 function bindInputPersistence() {
   const fieldMapping = [
     ['apiBase', elements.apiBase],
     ['apiPath', elements.apiPath],
+    ['modelsPath', elements.modelsPath],
     ['apiKey', elements.apiKey],
     ['model', elements.model],
-    ['systemPrompt', elements.systemPrompt]
+    ['systemPrompt', elements.systemPrompt],
+    ['assistantPrompt', elements.assistantPrompt]
   ];
 
   for (const [key, element] of fieldMapping) {
@@ -148,6 +180,43 @@ function appendMessage(role, content) {
   state.messages.push({ role, content });
   persistState();
   renderMessages();
+}
+
+async function refreshModels() {
+  setStatus('正在拉取模型列表...');
+  elements.refreshModelsBtn.disabled = true;
+
+  try {
+    const response = await fetch('/api/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        apiBase: state.apiBase.trim(),
+        modelsPath: state.modelsPath.trim() || '/v1/models',
+        apiKey: state.apiKey
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || '模型列表获取失败');
+    }
+
+    state.modelList = data.models || [];
+    renderModelOptions();
+
+    if (state.modelList.length > 0 && !state.modelList.includes(state.model)) {
+      state.model = state.modelList[0];
+      elements.model.value = state.model;
+    }
+
+    persistState();
+    setStatus(`模型列表获取成功，共 ${state.modelList.length} 个`);
+  } catch (error) {
+    setStatus(`模型列表错误: ${error.message}`);
+  } finally {
+    elements.refreshModelsBtn.disabled = false;
+  }
 }
 
 async function sendMessage() {
@@ -235,6 +304,7 @@ function bindEvents() {
   bindInputPersistence();
 
   elements.sendBtn.addEventListener('click', sendMessage);
+  elements.refreshModelsBtn.addEventListener('click', refreshModels);
   elements.saveAssistantBtn.addEventListener('click', insertAssistantMessageManually);
   elements.exportBtn.addEventListener('click', exportContext);
   elements.clearBtn.addEventListener('click', clearContext);

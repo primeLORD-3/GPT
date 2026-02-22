@@ -153,6 +153,10 @@ button {
   border-left: 4px solid #f1c95f;
 }
 
+.msg.assistant_prompt {
+  border-left: 4px solid #ff9ed1;
+}
+
 .composer {
   border-top: 1px solid rgba(126, 140, 221, 0.25);
   padding: 14px;

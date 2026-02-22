@@ -111,7 +111,16 @@ function resolveEndpoint(apiBase, apiPath) {
 }
 
 /**
- * 将请求转发到用户配置的反代 API。
+ * 解析模型列表接口地址。可单独配置，便于适配不同反代实现。
+ * @param {string} apiBase
+ * @param {string} modelsPath
+ */
+function resolveModelsEndpoint(apiBase, modelsPath) {
+  return resolveEndpoint(apiBase, modelsPath || '/v1/models');
+}
+
+/**
+ * 将请求转发到用户配置的反代 Chat API。
  * 支持自定义 base URL + path，适配任意 OpenAI 兼容网关。
  * @param {any} body
  */
@@ -179,11 +188,64 @@ async function proxyChatRequest(body) {
   };
 }
 
+/**
+ * 拉取上游模型列表（/v1/models），用于前端模型选择。
+ * @param {any} body
+ */
+async function proxyModelsRequest(body) {
+  const { apiBase, modelsPath = '/v1/models', apiKey } = body;
+  const endpoint = resolveModelsEndpoint(apiBase, modelsPath);
+
+  const response = await fetch(endpoint, {
+    method: 'GET',
+    headers: {
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+    }
+  });
+
+  const text = await response.text();
+  let payload;
+
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch (error) {
+    throw new Error(`模型列表接口返回了非 JSON 数据。片段: ${text.slice(0, 300)}`);
+  }
+
+  if (!response.ok) {
+    const err = new Error(payload?.error?.message || `模型列表上游错误 ${response.status}`);
+    err.statusCode = response.status;
+    throw err;
+  }
+
+  const models = Array.isArray(payload?.data)
+    ? payload.data.map((item) => item?.id).filter(Boolean)
+    : [];
+
+  return {
+    models,
+    raw: payload
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/api/chat') {
     try {
       const body = await readJsonBody(req);
       const result = await proxyChatRequest(body);
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, error.statusCode || 400, {
+        error: error.message || '未知错误'
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/models') {
+    try {
+      const body = await readJsonBody(req);
+      const result = await proxyModelsRequest(body);
       sendJson(res, 200, result);
     } catch (error) {
       sendJson(res, error.statusCode || 400, {

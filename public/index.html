@@ -10,14 +10,18 @@
     <div class="app-shell">
       <aside class="panel settings-panel">
         <h1>Proxy Chat Studio</h1>
-        <p class="subtitle">可自由配置反代网关 / 系统提示词 / 上下文管理</p>
+        <p class="subtitle">可自由配置反代网关 / 双提示词 / 模型列表</p>
 
         <label>API Base URL
           <input id="apiBase" type="text" placeholder="https://your-proxy.example.com" />
         </label>
 
-        <label>API Path
+        <label>Chat API Path
           <input id="apiPath" type="text" placeholder="/v1/chat/completions" />
+        </label>
+
+        <label>Models API Path
+          <input id="modelsPath" type="text" placeholder="/v1/models" />
         </label>
 
         <label>API Key
@@ -25,14 +29,21 @@
         </label>
 
         <label>Model
-          <input id="model" type="text" placeholder="gpt-4o-mini" />
+          <input id="model" type="text" list="modelOptions" placeholder="gpt-4o-mini" />
+          <datalist id="modelOptions"></datalist>
         </label>
 
-        <label>System Prompt
-          <textarea id="systemPrompt" rows="6" placeholder="在这里定义系统提示词..."></textarea>
+        <button id="refreshModelsBtn" class="secondary">获取反代模型列表</button>
+
+        <label>System Prompt（系统提示词）
+          <textarea id="systemPrompt" rows="5" placeholder="在这里定义系统提示词..."></textarea>
         </label>
 
-        <div class="context-info" id="contextInfo">上下文大小: 0 KB / 50 MB</div>
+        <label>Assistant Prompt（assistant 预设提示词）
+          <textarea id="assistantPrompt" rows="5" placeholder="在这里定义 assistant 预设消息..."></textarea>
+        </label>
+
+        <div class="context-info" id="contextInfo">上下文大小: 0 MB / 50 MB</div>
 
         <div class="button-grid">
           <button id="saveAssistantBtn" class="secondary">插入 assistant 消息</button>
