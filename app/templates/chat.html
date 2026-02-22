@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HAJIMI Chat Studio</title>
+    <style>
+      :root {
+        --bg: #0a0b10;
+        --panel: rgba(18, 20, 30, 0.78);
+        --line: rgba(255, 255, 255, 0.12);
+        --text: #f7f9ff;
+        --muted: #9ea6bf;
+        --primary: #7a5cff;
+        --secondary: #2dd4bf;
+        --danger: #ef476f;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        color: var(--text);
+        min-height: 100vh;
+        font-family: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: radial-gradient(circle at 18% 10%, #2c1f73 0%, transparent 34%),
+          radial-gradient(circle at 80% 0%, #114947 0%, transparent 33%),
+          var(--bg);
+      }
+      .layout {
+        width: min(1200px, 96vw);
+        margin: 20px auto;
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 16px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        backdrop-filter: blur(12px);
+        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
+      }
+      .sidebar { padding: 18px; }
+      .chatbox { padding: 0; display: flex; flex-direction: column; min-height: 86vh; }
+      h1 { margin: 0 0 10px; font-size: 20px; }
+      .hint { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+      .field { margin-bottom: 12px; }
+      .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+      .field input, .field textarea, .field select {
+        width: 100%;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: rgba(14, 15, 23, 0.9);
+        color: var(--text);
+        padding: 10px 12px;
+      }
+      .field textarea { min-height: 100px; resize: vertical; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      button {
+        border: 0;
+        border-radius: 10px;
+        padding: 9px 12px;
+        color: #fff;
+        cursor: pointer;
+        background: linear-gradient(135deg, var(--primary), #5b8dff);
+      }
+      button.alt { background: linear-gradient(135deg, #334155, #475569); }
+      button.warn { background: linear-gradient(135deg, #be123c, var(--danger)); }
+      .toolbar { padding: 14px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; flex-wrap: wrap; }
+      .messages { flex: 1; padding: 18px; overflow-y: auto; max-height: 64vh; }
+      .msg { margin-bottom: 12px; padding: 12px; border-radius: 14px; border: 1px solid var(--line); white-space: pre-wrap; line-height: 1.5; }
+      .msg.user { background: rgba(79, 70, 229, 0.2); }
+      .msg.assistant { background: rgba(6, 182, 212, 0.16); }
+      .msg.system { background: rgba(107, 114, 128, 0.22); }
+      .composer { border-top: 1px solid var(--line); padding: 14px; display: grid; gap: 8px; }
+      .status { color: var(--muted); font-size: 12px; }
+      .status strong { color: #c5d6ff; }
+      @media (max-width: 960px) {
+        .layout { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="panel sidebar">
+        <h1>✨ Chat Studio</h1>
+        <p class="hint">支持反代地址、自定义系统提示词、插入 assistant 消息、即时存档与上下文导出。</p>
+
+        <div class="field">
+          <label>反代 API Base URL（例如 https://xxx/v1）</label>
+          <input id="baseUrl" placeholder="https://your-proxy.example.com/v1" />
+        </div>
+
+        <div class="field">
+          <label>API Key（会保存在浏览器本地）</label>
+          <input id="apiKey" type="password" placeholder="sk-..." />
+        </div>
+
+        <div class="field">
+          <label>模型</label>
+          <input id="model" value="gemini-2.5-pro" />
+        </div>
+
+        <div class="field">
+          <label>系统提示词</label>
+          <textarea id="systemPrompt" placeholder="在这里定义系统角色"></textarea>
+        </div>
+
+        <div class="row">
+          <button id="insertAssistant" type="button">插入 Assistant</button>
+          <button id="saveNow" class="alt" type="button">立即存档</button>
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <button id="exportCtx" type="button">导出上下文</button>
+          <button id="importCtx" class="alt" type="button">导入上下文</button>
+        </div>
+        <input id="importFile" type="file" accept="application/json" style="display:none" />
+
+        <p class="status" id="ctxInfo">上下文大小：<strong>0 KB</strong> / 50 MB</p>
+      </aside>
+
+      <main class="panel chatbox">
+        <div class="toolbar">
+          <button id="clearChat" class="warn" type="button">清空会话</button>
+          <span class="status" id="stateText">状态：就绪</span>
+        </div>
+        <section class="messages" id="messages"></section>
+        <section class="composer">
+          <textarea id="userInput" placeholder="输入你的消息，按 Ctrl/Cmd + Enter 发送"></textarea>
+          <div class="row">
+            <button id="sendBtn" type="button">发送</button>
+            <button id="insertUser" class="alt" type="button">仅插入 User 消息</button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      /**
+       * 简洁聊天工作台：
+       * - 支持任意兼容 OpenAI ChatCompletions 的反代地址
+       * - 支持插入 assistant 消息
+       * - 本地即时存档（每次消息变动自动保存）
+       * - 上下文导入/导出，并限制在 50MB 以内
+       */
+      const STORAGE_KEY = "hajimi_chat_studio_v1";
+      const LIMIT_BYTES = 50 * 1024 * 1024;
+
+      const els = {
+        baseUrl: document.getElementById("baseUrl"),
+        apiKey: document.getElementById("apiKey"),
+        model: document.getElementById("model"),
+        systemPrompt: document.getElementById("systemPrompt"),
+        messages: document.getElementById("messages"),
+        userInput: document.getElementById("userInput"),
+        stateText: document.getElementById("stateText"),
+        ctxInfo: document.getElementById("ctxInfo"),
+        importFile: document.getElementById("importFile")
+      };
+
+      let chatMessages = [];
+
+      function setStatus(text) { els.stateText.textContent = `状态：${text}`; }
+
+      function readableSize(bytes) {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+      }
+
+      function getSnapshot() {
+        return {
+          baseUrl: els.baseUrl.value.trim(),
+          apiKey: els.apiKey.value,
+          model: els.model.value.trim(),
+          systemPrompt: els.systemPrompt.value,
+          messages: chatMessages
+        };
+      }
+
+      function snapshotBytes(snapshot = getSnapshot()) {
+        return new Blob([JSON.stringify(snapshot)]).size;
+      }
+
+      function refreshCtxInfo() {
+        const bytes = snapshotBytes();
+        els.ctxInfo.innerHTML = `上下文大小：<strong>${readableSize(bytes)}</strong> / 50 MB`;
+        els.ctxInfo.style.color = bytes > LIMIT_BYTES ? "#fb7185" : "";
+      }
+
+      function persist() {
+        const snapshot = getSnapshot();
+        const bytes = snapshotBytes(snapshot);
+        if (bytes > LIMIT_BYTES) {
+          setStatus("上下文超过 50MB，存档被阻止");
+          refreshCtxInfo();
+          return false;
+        }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+        refreshCtxInfo();
+        return true;
+      }
+
+      function renderMessages() {
+        els.messages.innerHTML = "";
+        chatMessages.forEach((m, i) => {
+          const box = document.createElement("div");
+          box.className = `msg ${m.role}`;
+          box.textContent = `${m.role.toUpperCase()} #${i + 1}\n${m.content}`;
+          els.messages.appendChild(box);
+        });
+        els.messages.scrollTop = els.messages.scrollHeight;
+        refreshCtxInfo();
+      }
+
+      function addMessage(role, content) {
+        if (!content.trim()) return;
+        chatMessages.push({ role, content: content.trim() });
+        renderMessages();
+        persist();
+      }
+
+      async function sendMessage() {
+        const content = els.userInput.value.trim();
+        if (!content) return;
+        const baseUrl = els.baseUrl.value.trim().replace(/\/$/, "");
+        if (!baseUrl) return alert("请先填写反代 API Base URL");
+        if (!els.model.value.trim()) return alert("请填写模型名");
+
+        addMessage("user", content);
+        els.userInput.value = "";
+        setStatus("请求中...");
+
+        const reqMessages = [];
+        if (els.systemPrompt.value.trim()) {
+          reqMessages.push({ role: "system", content: els.systemPrompt.value.trim() });
+        }
+        reqMessages.push(...chatMessages);
+
+        try {
+          const resp = await fetch(`${baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${els.apiKey.value || "none"}`
+            },
+            body: JSON.stringify({
+              model: els.model.value.trim(),
+              messages: reqMessages,
+              stream: false
+            })
+          });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          const answer = data?.choices?.[0]?.message?.content || "(空响应)";
+          addMessage("assistant", answer);
+          setStatus("完成");
+        } catch (err) {
+          addMessage("assistant", `请求失败：${err.message}`);
+          setStatus("失败");
+        }
+      }
+
+      function loadFromLocal() {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        try {
+          const data = JSON.parse(raw);
+          els.baseUrl.value = data.baseUrl || "";
+          els.apiKey.value = data.apiKey || "";
+          els.model.value = data.model || "gemini-2.5-pro";
+          els.systemPrompt.value = data.systemPrompt || "";
+          chatMessages = Array.isArray(data.messages) ? data.messages : [];
+          renderMessages();
+          setStatus("已恢复本地会话");
+        } catch {
+          setStatus("本地会话损坏，已忽略");
+        }
+      }
+
+      document.getElementById("sendBtn").onclick = sendMessage;
+      document.getElementById("insertUser").onclick = () => {
+        addMessage("user", els.userInput.value);
+        els.userInput.value = "";
+      };
+      document.getElementById("insertAssistant").onclick = () => {
+        const text = prompt("输入要插入的 assistant 消息：", "");
+        if (text !== null) addMessage("assistant", text);
+      };
+      document.getElementById("saveNow").onclick = () => {
+        if (persist()) setStatus("已手动存档");
+      };
+      document.getElementById("clearChat").onclick = () => {
+        if (!confirm("确定清空聊天上下文？")) return;
+        chatMessages = [];
+        renderMessages();
+        persist();
+        setStatus("已清空");
+      };
+      document.getElementById("exportCtx").onclick = () => {
+        const snapshot = getSnapshot();
+        const bytes = snapshotBytes(snapshot);
+        if (bytes > LIMIT_BYTES) return alert("当前上下文已超过 50MB，无法导出");
+        const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `chat-context-${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        setStatus("导出成功");
+      };
+      document.getElementById("importCtx").onclick = () => els.importFile.click();
+      els.importFile.onchange = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const text = await file.text();
+        const bytes = new Blob([text]).size;
+        if (bytes > LIMIT_BYTES) return alert("导入文件超过 50MB 上限");
+        try {
+          const data = JSON.parse(text);
+          els.baseUrl.value = data.baseUrl || "";
+          els.apiKey.value = data.apiKey || "";
+          els.model.value = data.model || "gemini-2.5-pro";
+          els.systemPrompt.value = data.systemPrompt || "";
+          chatMessages = Array.isArray(data.messages) ? data.messages : [];
+          renderMessages();
+          persist();
+          setStatus("导入成功");
+        } catch {
+          alert("导入失败：JSON 格式不正确");
+        } finally {
+          els.importFile.value = "";
+        }
+      };
+
+      ["input", "change"].forEach((evt) => {
+        [els.baseUrl, els.apiKey, els.model, els.systemPrompt].forEach((el) => {
+          el.addEventListener(evt, () => persist());
+        });
+      });
+
+      els.userInput.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") sendMessage();
+      });
+
+      loadFromLocal();
+      renderMessages();
+      persist();
+    </script>
+  </body>
+</html>

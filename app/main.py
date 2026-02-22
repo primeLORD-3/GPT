@@ -33,6 +33,12 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 app = FastAPI(limit="50M")
 
+
+@app.get("/chat", response_class=HTMLResponse)
+async def chat_page(request: Request):
+    """提供一个可直接使用的聊天前端页面。"""
+    return templates.TemplateResponse("chat.html", {"request": request})
+
 # --------------- CORS 中间件 ---------------
 # 如果 ALLOWED_ORIGINS 为空列表，则不允许任何跨域请求
 if settings.ALLOWED_ORIGINS:
