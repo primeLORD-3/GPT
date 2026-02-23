@@ -1,0 +1,13 @@
+{
+  "name": "reverse-proxy-chat-studio",
+  "version": "1.0.0",
+  "description": "可自由调用反向代理的 AI 聊天工具",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

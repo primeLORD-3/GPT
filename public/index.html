@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Proxy Chat Studio</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="panel settings-panel">
+        <h1>Proxy Chat Studio</h1>
+        <p class="subtitle">可自由配置反代网关 / 双提示词 / 模型列表 / 再生成</p>
+
+        <label>API Base URL
+          <input id="apiBase" type="text" placeholder="https://your-proxy.example.com" />
+        </label>
+
+        <label>Chat API Path
+          <input id="apiPath" type="text" placeholder="/v1/chat/completions" />
+        </label>
+
+        <label>Models API Path
+          <input id="modelsPath" type="text" placeholder="/v1/models" />
+        </label>
+
+        <label>API Key
+          <input id="apiKey" type="password" placeholder="sk-..." />
+        </label>
+
+        <label>Model
+          <input id="model" type="text" list="modelOptions" placeholder="gpt-4o-mini" />
+          <datalist id="modelOptions"></datalist>
+        </label>
+
+        <button id="refreshModelsBtn" class="secondary">获取反代模型列表</button>
+
+        <label class="inline-check">
+          <input id="streamMode" type="checkbox" /> 使用流式传输
+        </label>
+
+        <label>System Prompt（系统提示词）
+          <textarea id="systemPrompt" rows="4" placeholder="在这里定义系统提示词..."></textarea>
+        </label>
+
+        <label>Assistant Prompt（assistant 预设提示词）
+          <textarea id="assistantPrompt" rows="4" placeholder="在这里定义 assistant 预设消息..."></textarea>
+        </label>
+
+        <label>SillyTavern 正则规则（兼容多格式）
+          <textarea id="sillyRegexRules" rows="5" placeholder="示例: /<think>[\s\S]*?<\/think>/gi=>\n也支持: s/<analysis>[\s\S]*?<\/analysis>//gi"></textarea>
+        </label>
+
+        <div class="context-info" id="contextInfo">上下文大小: 0 MB / 50 MB</div>
+
+        <input id="importFileInput" type="file" accept="application/json" hidden />
+
+        <div class="button-grid">
+          <button id="saveAssistantBtn" class="secondary">插入 assistant 消息</button>
+          <button id="exportBtn" class="secondary">导出上下文</button>
+          <button id="importBtn" class="secondary">导入上下文</button>
+          <button id="clearBtn" class="danger">清空上下文</button>
+        </div>
+      </aside>
+
+      <main class="panel chat-panel">
+        <div id="messages" class="messages"></div>
+
+        <div class="composer">
+          <textarea id="userInput" rows="3" placeholder="输入你的消息... (Ctrl/Cmd + Enter 发送)"></textarea>
+          <div class="composer-actions">
+            <span id="status" class="status">就绪</span>
+            <button id="sendBtn" class="primary">发送</button>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
