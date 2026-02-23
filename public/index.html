@@ -39,10 +39,6 @@
           <input id="streamMode" type="checkbox" /> 使用流式传输
         </label>
 
-        <label class="inline-check">
-          第 <input id="variantIndex" type="number" min="1" step="1" value="1" class="mini-input" /> 个不同结果
-        </label>
-
         <label>System Prompt（系统提示词）
           <textarea id="systemPrompt" rows="4" placeholder="在这里定义系统提示词..."></textarea>
         </label>
@@ -61,7 +57,6 @@
 
         <div class="button-grid">
           <button id="saveAssistantBtn" class="secondary">插入 assistant 消息</button>
-          <button id="regenerateBtn" class="secondary">重新生成</button>
           <button id="exportBtn" class="secondary">导出上下文</button>
           <button id="importBtn" class="secondary">导入上下文</button>
           <button id="clearBtn" class="danger">清空上下文</button>
